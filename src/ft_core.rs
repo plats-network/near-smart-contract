@@ -1,13 +1,9 @@
-use near_sdk::{assert_one_yocto, ext_contract, Gas, PromiseOrValue, PromiseResult};
-use near_sdk::serde::{Deserialize, Serialize};
 use crate::*;
+use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{assert_one_yocto, ext_contract, Gas, PromiseOrValue, PromiseResult};
 
 const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas(5_000_000_000_000);
 const GAS_FOR_FT_TRANSFER_CALL: Gas = Gas(25_000_000_000_000 + GAS_FOR_RESOLVE_TRANSFER.0);
-
-
-
-
 
 #[ext_contract(ext_ft_core)]
 pub trait FungibleTokenCore {
@@ -61,8 +57,6 @@ pub trait FungibleTokenCore {
     fn ft_balance_of(&self, account_id: AccountId) -> U128;
 }
 
-
-
 #[near_bindgen]
 impl FungibleTokenCore for Contract {
     #[payable]
@@ -74,7 +68,6 @@ impl FungibleTokenCore for Contract {
 
         // How many tokens the user wants to withdraw
         let amount: Balance = amount.into();
-
 
         // Transfer the tokens
         self.internal_transfer(&sender_id, &receiver_id, amount, memo);
@@ -95,29 +88,21 @@ impl FungibleTokenCore for Contract {
         // How many tokens the sender wants to transfer
         let amount: Balance = amount.into();
 
-
-
-
         // Transfer the tokens
-        self.internal_transfer(&sender_id, &receiver_id, amount,memo );
-            // Initiating receiver's call and the callback
-            // Defaulting GAS weight to 1, no attached deposit, and static GAS equal to the GAS for ft transfer call.
-            ext_ft_receiver::ext(receiver_id.clone())
-                .with_static_gas(GAS_FOR_FT_TRANSFER_CALL)
-                .ft_on_transfer(
-                    sender_id.clone(),
-                    amount.into(),
-                    msg,
-                )
-                // We then resolve the promise and call ft_resolve_transfer on our own contract
-                // Defaulting GAS weight to 1, no attached deposit, and static GAS equal to the GAS for resolve transfer
-                .then(
-                    Self::ext(env::current_account_id())
-                        .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
-                        .ft_resolve_transfer(&sender_id, receiver_id, amount.into()),
-                )
-                .into()
-        
+        self.internal_transfer(&sender_id, &receiver_id, amount, memo);
+        // Initiating receiver's call and the callback
+        // Defaulting GAS weight to 1, no attached deposit, and static GAS equal to the GAS for ft transfer call.
+        ext_ft_receiver::ext(receiver_id.clone())
+            .with_static_gas(GAS_FOR_FT_TRANSFER_CALL)
+            .ft_on_transfer(sender_id.clone(), amount.into(), msg)
+            // We then resolve the promise and call ft_resolve_transfer on our own contract
+            // Defaulting GAS weight to 1, no attached deposit, and static GAS equal to the GAS for resolve transfer
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
+                    .ft_resolve_transfer(&sender_id, receiver_id, amount.into()),
+            )
+            .into()
     }
 
     fn ft_total_supply(&self) -> U128 {
@@ -131,16 +116,11 @@ impl FungibleTokenCore for Contract {
     }
 }
 
-
-
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 struct PaymentInfo {
-    task_id: String
+    task_id: String,
 }
-
-
-
 
 #[ext_contract(ext_ft_receiver)]
 pub trait FungibleTokenReceiver {
@@ -170,7 +150,6 @@ pub trait FungibleTokenReceiver {
     ) -> PromiseOrValue<U128>;
 }
 
-
 #[near_bindgen]
 impl FungibleTokenReceiver for Contract {
     /// Callback on receiving tokens by this contract.
@@ -181,24 +160,58 @@ impl FungibleTokenReceiver for Contract {
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
+        if msg != "" {
+            let split_msg: Vec<&str> = msg.split(" ").collect();
+            if split_msg.len() == 1 {
+                if self.check_exist_event(&msg) {
+                    let sender_id = env::signer_account_id();
+                    let result = self.internal_sponse(&sender_id, &msg, amount.into(), Token::USDT);
+                    if result {
+                        PromiseOrValue::Value(U128(0))
+                    } else {
+                        PromiseOrValue::Value(amount)
+                    }
+                } else {
+                    env::panic_str("EventId not exist");
+                }
+            } else {
+                let event_id = split_msg.iter().nth(1).unwrap_or_else(|| {
+                    env::panic_str(
+                        "The message that the user deposited is not in the correct format",
+                    )
+                });
+                let result = self.internal_more_sponse_usdt(
+                    &sender_id,
+                    &String::from(*event_id),
+                    amount.into(),
+                );
+                if result {
+                    PromiseOrValue::Value(U128(0))
+                } else {
+                    PromiseOrValue::Value(amount)
+                }
+            }
+        } else {
+            PromiseOrValue::Value(amount)
+        }
 
-        let json_result: PaymentInfo = near_sdk::serde_json::from_str(&msg).expect("Not valid payment args");
+        // let json_result: PaymentInfo =
+        //     near_sdk::serde_json::from_str(&msg).expect("Not valid payment args");
 
-        let id = json_result.task_id;
+        // let id = json_result.task_id;
 
-        self.tasks.remove(&id);
+        // self.tasks.remove(&id);
 
-        let task_info = TaskInfo {
-            client: sender_id,
-            amount: amount,
-        };
+        // let task_info = TaskInfo {
+        //     client: sender_id,
+        //     amount: amount,
+        // };
 
-        self.tasks.insert(&id,&task_info);
+        // self.tasks.insert(&id, &task_info);
 
-        PromiseOrValue::Value(U128(0))
+        // PromiseOrValue::Value(U128(0))
     }
 }
-
 
 #[near_bindgen]
 impl Contract {
